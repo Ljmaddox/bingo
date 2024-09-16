@@ -2,24 +2,21 @@ from flask import Flask, render_template
 import random
 import os
 import json
-import fcntl
 from gevent.pywsgi import WSGIServer
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from geventwebsocket.handler import WebSocketHandler
+import redis
 
-# Import the send_twitch_message function from the bot script
+# Connect to Redis (example configuration)
+redis_client = redis.StrictRedis(host='your-redis-host', port=6379, db=0)
 
 app = Flask(__name__)
 
 # Initialize SocketIO with gevent for compatibility
 socketio = SocketIO(app, async_mode='gevent')
 
-def write_message_to_file(name, message):
-    with open('message_to_send.json', 'w') as f:
-        # Lock the file to prevent simultaneous writes
-        fcntl.flock(f, fcntl.LOCK_EX)
-        json.dump({'name': name, 'message': message}, f)
-        fcntl.flock(f, fcntl.LOCK_UN)
+def write_message_to_redis(name, message):
+    redis_client.set('message_to_send', json.dumps({'name': name, 'message': message}))
 
 # Function to load bingo items from a text file
 def load_bingo_items(filename='bingo_items.txt'):
@@ -49,13 +46,3 @@ def index():
 def handle_bingo_event(data):
     player_name = data.get('name')
     message = data.get('message')
-    cells = data.get('cells')
-    # Write the message and player name to the file
-    write_message_to_file(player_name, message)
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    # Create a WSGI server with gevent and websocket handler
-    http_server = WSGIServer(('0.0.0.0', port), app, handler_class=WebSocketHandler)
-    print(f"Running on port {port}")
-    http_server.serve_forever()

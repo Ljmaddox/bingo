@@ -2,6 +2,7 @@ import discord
 import json
 import asyncio
 import os
+import redis
 
 # Define intents
 intents = discord.Intents.default()
@@ -11,46 +12,38 @@ intents.members = True  # To fetch members of the guild
 # Create an instance of a client with intents
 client = discord.Client(intents=intents)
 
-@client.event
-async def on_ready():
-    print(f'Logged in as {client.user}')
-    # Start a background task to check for new messages
-    client.loop.create_task(check_for_messages())
+# Connect to Redis (example configuration)
+redis_client = redis.StrictRedis(host='your-redis-host', port=6379, db=0)
 
 async def check_for_messages():
     while True:
         try:
-            if os.path.exists('message_to_send.json'):
-                with open('message_to_send.json', 'r') as f:
-                    data = json.load(f)
-                    message = data.get('message')
-                    player_name = data.get('name')
+            # Retrieve the message from Redis
+            message_data = redis_client.get('message_to_send')
+            if message_data:
+                message_data = json.loads(message_data)
+                player_name = message_data.get('name')
+                message = message_data.get('message')
 
-                    # Ensure both message and player_name are present
-                    if not player_name or not message:
-                        print(f"Invalid data in message_to_send.json: {data}")
-                        os.remove('message_to_send.json')  # Remove invalid file to stop the loop
-                        continue
+                if not player_name or not message:
+                    print(f"Invalid data in Redis: {message_data}")
+                    redis_client.delete('message_to_send')
+                    continue
 
-                    # Find the first text channel the bot has permission to send messages to
-                    channel = find_channel_with_permissions()
-                    if channel:
-                        player_id = await get_member_id(channel.guild, player_name)
-                        if player_id:
-                            # Format mention properly
-                            mention = f'<@{player_id}>'
-                            await send_message(channel, f'{mention} {message}')
-                        else:
-                            print(f"Player '{player_name}' not found in the server.")
-                        
-                # Remove the file only after successful processing
-                os.remove('message_to_send.json')
+                channel = find_channel_with_permissions()
+                if channel:
+                    player_id = await get_member_id(channel.guild, player_name)
+                    if player_id:
+                        mention = f'<@{player_id}>'
+                        await send_message(channel, f'{mention} {message}')
+                    else:
+                        print(f"Player '{player_name}' not found in the server.")
+                    
+                redis_client.delete('message_to_send')
         except Exception as e:
             print(f'Error: {e}')
-            # Consider removing or renaming the file here if processing fails
-            if os.path.exists('message_to_send.json'):
-                os.remove('message_to_send.json')
-        await asyncio.sleep(3)  # Check every 3 seconds
+            redis_client.delete('message_to_send')
+        await asyncio.sleep(3)
 
 def find_channel_with_permissions():
     for guild in client.guilds:
@@ -71,11 +64,7 @@ async def get_member_id(guild, player_name):
 
 async def send_message(channel, message):
     if channel:
-        try:
-            await channel.send(message)
-            print(f"Message sent to {channel.name}: {message}")
-        except Exception as e:
-            print(f"Failed to send message: {e}")
+        await channel.send(message)
 
 # Hardcode your bot token here
 token = os.environ.get('DISCORD_TOKEN')
